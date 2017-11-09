@@ -1,0 +1,213 @@
+---
+title: "Projeto - Mapeando a Ocorrencia do Virus Zika"
+author: "Lauro"
+date: "09/11/2017"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Projeto 5 - Mapeando a Ocorrencia do Virus Zika
+
+Para esta analise, vamos usar um conjunto de dados coletados do Portal da Saude do Governo Federal.
+
+http://portalsaude.saude.gov.br/index.php/o-ministerio/principal/leia-mais-o-ministerio/1234-secretaria-svs/vigilancia-de-a-a-z/microcefalia-svs/22705&catid=1234&Itemid=250
+
+http://combateaedes.saude.gov.br/pt/situacao-epidemiologica
+
+Todo o projeto sera descrito de acordo com suas etapas. Os acentos foram ignorados para evitar problemas de interpretacao em diferentes sistemas operacionais.
+
+
+
+## Etapa 1 - Coletando os dados
+
+
+```{r coleta}
+# Carregando os pacotes
+# devtools::install_github("wch/webshot")
+library(dplyr)
+library(ggplot2)
+
+# Listando os arquivos e gerando uma lista com os respctivos nomes
+temp_files <- list.files(pattern = ".csv")
+temp_files
+```
+
+
+
+## Etapa 2 - Organizando os dados
+
+
+```{r organizando}
+# Carregando todos os arquivos em um unico objeto
+myfiles <- lapply(temp_files, read.csv, stringsAsFactors = FALSE) 
+
+# Resumo dos arquivos
+str(myfiles, 1)
+lapply(myfiles, names)[1]
+lapply(myfiles, head,2)[1:2]
+
+# Organizando o shape dos dados
+brazil <- do.call(rbind, myfiles)
+brazil <- brazil %>% 
+  mutate(report_date = as.Date(report_date))
+
+# Visualizando o dataset
+glimpse(brazil)
+
+
+```
+
+
+
+## Etapa 3 - Transformando o dataframe em um objeto dplyr
+
+
+```{r transformando}
+# Transformando o dataframe um uma tabela dplyr e removendo as colunas 6 a 7
+brazil <- brazil %>% select(-(6:7)) 
+
+# Visualizando as primeiras 20 linhas
+brazil %>% slice (1:20) 
+
+# Para cada reporting_date nos temos 5 regioes
+brazil %>% filter(location_type == "region")
+brazil %>% filter(location_type == "region") %>% 
+  ggplot(aes(x = report_date, y = value, group = location, color = location)) + 
+  geom_line() +  
+  geom_point() +
+  ggtitle("Casos de Zika por Regiao do Brasil")
+
+
+```
+
+
+
+## Etapa 4 - Separando as regioes e visualizando os dados
+
+
+```{r separando}
+# Separando as Regioes e Visualizando os Dados
+region <- brazil %>% 
+  filter(location_type == "region")
+
+region %>% 
+  ggplot(aes(x =location, y = value)) + geom_bar(stat = "identity") +
+  ylab("Numero de Casos Reportados") + xlab("Region") + 
+  ggtitle("Casos de Zika Reportados no Brasil")
+
+region %>% 
+  slice(1:length(unique(region$location))) %>% 
+  arrange(desc(value)) %>%
+  mutate(location = factor(location, levels = location,ordered = TRUE)) %>%
+  ggplot(aes(x = location, y = value)) + geom_bar(stat = "identity") +
+  ylab("Numero de Casos Reportados") + xlab("Region") + 
+  ggtitle("Casos de Zika Reportados no Brasil")
+
+# Obtendo localidades unicas
+region %>% 
+  slice(1:length(unique(region$location)))
+
+# Organziando as localidades unicas por numero de casos reportados
+region %>% 
+  slice(1:length(unique(region$location))) %>% 
+  arrange(desc(value))
+
+# Criando variaveis do tipo fator
+region %>% 
+  slice(1:length(unique(region$location))) %>% 
+  arrange(desc(value)) %>%
+  mutate(location = factor(location,levels=location,ordered=TRUE)) %>% 
+  glimpse()
+
+```
+
+
+
+## Etapa 5 - Agrupando e sumarizando
+ 
+ 
+```{r agrupando}
+# Agrupando o Sumarizando
+brazil_totals <- brazil %>% filter(location=="Brazil") 
+region_totals <- brazil %>% filter(location_type=="region") %>%
+  group_by(report_date,location) %>%  
+  summarize(tot = sum(value)) 
+
+# Padronizar os dados e remover as sumarizacoes
+regvec <- vector()  
+length(regvec) <- nrow(brazil)
+for (ii in 1:nrow(brazil)) {
+  if (brazil[ii,]$location_type != "region")  {
+    regvec[ii] <- newlab
+  } else {
+    newlab <- brazil[ii,]$location
+    regvec[ii] <- newlab
+  }
+}
+
+# Agregando o vetor de regioes ao dataframe brasil
+statedf <- cbind(brazil,regvec)
+
+# Eliminar o sumario de linhas por regiao e pais
+statedf <- statedf %>% filter(location != "Brazil") 
+statedf <- statedf %>% filter(location_type != "region") 
+```
+
+
+
+## Etapa 6 - Gerar o total por regioes a partir dos dados transformados
+
+
+```{r gerando}
+# Gerar o total por regioes a partir dos dados transformados
+statedf %>% group_by(report_date,regvec) %>% 
+  summarize(tot=sum(value)) -> totals
+
+# Gerando os mapas de cada estado do Brasil
+#install.packages('ggmap')
+library(ggmap)
+longlat <- geocode(unique(statedf$location)) %>% 
+  mutate(loc = unique(statedf$location)) 
+
+# Salvando os geocodes do dataframe statedf e salvando em um novo dataframe chamado formapping
+statedf %>% filter(as.character(report_date) == "2016-06-11") %>% 
+  group_by(location) %>% summarize(cases = sum(value)) %>% 
+  inner_join(longlat, by = c("location" = "loc")) %>% 
+  mutate(LatLon = paste(lat, lon, sep = ":")) -> formapping
+
+# Visualizando os dados
+head(formapping) 
+
+# Formatando a saida e gerando um movo dataframe chamado long_formapping
+num_of_times_to_repeat <- formapping$cases
+long_formapping <- formapping[rep(seq_len(nrow(formapping)),
+                                  num_of_times_to_repeat),]
+
+# Visualizando os dados
+head(long_formapping)
+```
+
+
+
+## Etapa 7 - Gerando o Mapa do Brasil com a Ocorrencia do Virus Zika
+
+
+```{r mapa}
+# Instalando o pacote leaflet
+# install.packages("leaflet")
+library(leaflet)
+
+# Gerando o mapa com o dataframe
+# Aplique o zoom
+leaflet(long_formapping) %>% 
+  addTiles() %>% 
+  addMarkers(clusterOptions = markerClusterOptions())
+```
+
+
